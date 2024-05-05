@@ -3,16 +3,18 @@ from typing import List
 
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
+from langchain.vectorstores import Chroma
 from langchain.chains import (
     ConversationalRetrievalChain,
 )
-from langchain_community.chat_models import ChatOpenAI
+from langchain.chat_models import ChatOpenAI
 
 from langchain.docstore.document import Document
 from langchain.memory import ChatMessageHistory, ConversationBufferMemory
 
 import chainlit as cl
+
+print("all_ok")
 
 from dotenv import load_dotenv
 
@@ -22,7 +24,9 @@ OPENAI_API_KEY=os.getenv("OPENAI_API_KEY")
 
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
+
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+
 
 @cl.on_chat_start
 async def on_chat_start():
@@ -37,30 +41,36 @@ async def on_chat_start():
             timeout=180,
         ).send()
 
-        file = files[0]
+    file = files[0]
 
-        msg = cl.Message(content=f"processing `{file.name}...", disable_feedback=True)
-        await msg.send()
+    msg = cl.Message(content=f"Processing `{file.name}`...", disable_feedback=True)
+    await msg.send()
 
-        with open(file.path, "r", encoding="utf-8") as f:
-            text = f.read()
+    with open(file.path, "r", encoding="utf-8") as f:
+        text = f.read()
 
-        # Split the text into chunks
-        texts = text_splitter.split_text(text)
+    # Split the text into chunks
+    texts = text_splitter.split_text(text)
 
-        embeddings = OpenAIEmbeddings()
-        docsearch = await cl.make_async(Chroma.from_texts)(
-            texts, embeddings, metadatas=metadatas
-        )
 
-    message_history = ChatMessageHistory()
+    # Create a metadata for each chunk
+    metadatas = [{"source": f"{i}-pl"} for i in range(len(texts))]
+
+    # Create a Chroma vector store
+    embeddings = OpenAIEmbeddings()
+    docsearch = await cl.make_async(Chroma.from_texts)(
+        texts, embeddings, metadatas=metadatas
+    )
+
+    message_history=ChatMessageHistory()
 
     memory=ConversationBufferMemory(
-            memory_key="chat_history",
-            output_key="answer",
-            chat_memory=message_history,
-            return_messages=True
-        )
+        memory_key="chat_history",
+        output_key="answer",
+        chat_memory=message_history,
+        return_messages=True,
+
+    )
 
     chain=ConversationalRetrievalChain.from_llm(
         ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0, streaming=True),
@@ -68,12 +78,15 @@ async def on_chat_start():
         retriever=docsearch.as_retriever(),
         memory=memory,
         return_source_documents=True,
+
     )
 
+    # Let the user know that the system is ready
     msg.content = f"Processing `{file.name}` done. You can now ask questions!"
     await msg.update()
 
     cl.user_session.set("chain", chain)
+
 
 @cl.on_message
 async def main(message: cl.Message):
@@ -83,6 +96,8 @@ async def main(message: cl.Message):
     res = await chain.acall(message.content, callbacks=[cb])
     answer = res["answer"]
     source_documents = res["source_documents"]
+
+
     text_elements = []  # type: List[cl.Text]
 
     if source_documents:
@@ -100,3 +115,4 @@ async def main(message: cl.Message):
             answer += "\nNo sources found"
 
     await cl.Message(content=answer, elements=text_elements).send()
+
